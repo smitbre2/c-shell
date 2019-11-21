@@ -2,7 +2,10 @@
 #Author: Brenden Smith
 #Description: Small shell that will have a few built in commands:
 #	exit, cd, and status (They are always run in the foreground).
-#       Other included functionalities will be ls	
+#       Other shell functions will be achieved with exec. Commands
+#	Can be ran in the background given final argument &.
+#
+#	Ctrl-Z will activate foreground only mode.
 *********************************************************************/
 
 #include <sys/wait.h>
@@ -136,11 +139,11 @@ char* read_line(){
 	   buffer[index] = '\0';
 	   return buffer;
 	}
-	else if(letter == '$'){
+	else if(letter == '$'){		//Check for special char
 	   //Expand
 	   expan_count++;
 	   
-	   if(expan_count == 2){
+	   if(expan_count == 2){	//If two in succession, expand var
 	   	//Get pid
 		myp = getpid();
 		sprintf(expan, "%d", myp);	//Stringify
@@ -149,7 +152,7 @@ char* read_line(){
 	   	int i = 1;
 		buffer[index-1] = expan[0];
 		for(i;i < strlen(expan); i++){
-			buffer[index] = expan[i];
+			buffer[index] = expan[i];	//Insert into buffer
 			index++;
 		}
 	   
@@ -290,12 +293,12 @@ int execute(char **p, int *last){
       int i = 0;
       for(i; i < 4; i++){	 
 	 
-	 if(strcmp(p[0], easy_string[i]) == 0){
+	 if(strcmp(p[0], easy_string[i]) == 0){		//Check for built-in
 	    //Return the function
 	    if (i < 3)
 	       return (built_in(p, last));
 	    else
-	       return 1;
+	       return 1;				//Is comment
 	 }
       }
    }
