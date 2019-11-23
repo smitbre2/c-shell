@@ -14,9 +14,17 @@
 #include <string.h>
 #include <errno.h>
 
-//Mode will altered by sig_handle to change to foreground process only
-int mode = 0;
-int back_check = 1;
+struct child_pids{
+   int pids[10];
+   int num_pids;
+};
+
+
+struct child_pids kids;			//Holds all background pids
+int mode = 0;				//Tracks foreground only mode
+int read = 0;				//Does std need to be read
+int write = 0;				//Write out std to file1
+
 
 //Signal Handler: Will handle all SIGTSTP and SIGINT
 void sig_handle(int sig){
@@ -38,12 +46,6 @@ void sig_handle(int sig){
 	signal(SIGTSTP, sig_handle);	//Reset to the handler
    }
 
-  //Report the halted process
-  if(sig == SIGCHLD){
-     printf("terminated by signal %i\n", sig);
-     fflush(stdout);
-     signal(SIGCHLD, sig_handle);
-  } 
 }
 
 /********************************************************************
@@ -62,6 +64,7 @@ int get_me_outta_here(){
 ********************************************************************/
 int status(char **p, int *status){
    printf("exit value %i\n", *status);
+   fflush(stdout);
    return 1;
 }
 
@@ -74,7 +77,7 @@ int status(char **p, int *status){
 int cd(char **p){
    char buff[100];
  
-   //Check arguments
+   //Check argumen:ts
    if(p[1] == NULL){
    	chdir(getenv("HOME"));	//CD to home directory
    	return 1;
@@ -122,20 +125,11 @@ char* read_line(){
    do{
 	letter = getchar();
 
-
 	//Base case
 	if (letter == EOF){
 	   return NULL;
 	}
 	else if (letter == '\n'){	//If end of line, cap string and return
-	   if(buffer[index-1] == '&'){	//Set background flag
-	      back_check = 0;
-	      buffer[index-1] = '\0';
-	   }
-	   else{
-	      back_check = 1;
-	   }
-
 	   buffer[index] = '\0';
 	   return buffer;
 	}
@@ -159,9 +153,8 @@ char* read_line(){
 	   }else{
 	      buffer[index] = letter;	//Write in $, might not be $$
 	   }
-
-	}
-	else{				//Insert letter
+	
+	}else{				//Insert letter
 	   buffer[index] = letter;
 	   expan_count = 0;		//Reset variable expan tracker
 	}
@@ -169,6 +162,7 @@ char* read_line(){
 	index++;			//Increment buffer index
    
    }while(1);
+
 
 }
 
@@ -179,24 +173,60 @@ char* read_line(){
 #Parameters: User-input from read_line()
 #Return: Seperated Parameters
 ********************************************************************/
-char** get_params(char *u){
+char** get_params(char *u, int* back_check){
    char* word;
+   char* next;
    char** p = malloc(sizeof(char*) * 512); 		//Holds params
    int i = 0;
    int getp;
-   char myp[6];
+     
+
+   
 
    word = strtok(u, " ");
-   while(word != NULL){				 //Input is good to read
-      
-      p[i] = malloc(sizeof(char) * strlen(word));//Allocate for param size
-      strcpy(p[i], word);
-
-      i++;					//Move iterator
-      word = strtok(NULL, " ");			//Get next word
-   
-      
+   if(!word){
+   	return NULL;
    }
+   
+   if(strcmp(word, "#") == 0){			//Is it a comment
+   	return NULL;
+   }else if(word[0] == '#'){
+   	return NULL;
+   }
+   while(word != NULL){				 //Input is good to read
+       
+       next = strtok(NULL, " ");		//Peak for end of input
+
+       //If last param is actually & dont insert and update flags
+       if(next == NULL){
+	  if(strcmp(word, "&") == 0){		//If background command found
+	        
+	        if(mode == 0){
+			*back_check = 1;	//Set flag if mode allows
+		}else{
+			*back_check = 0;
+		}
+	
+          	return p;
+	  }
+       }
+
+       if(strcmp(word, "<") == 0){
+	  //Call readfile
+       	  read = 1;
+       
+       }else if(strcmp(word, ">") == 0){
+       	  //Call writeFile
+	  write = 1;
+       }
+
+       //Write out word
+       	p[i] = malloc(sizeof(char) * strlen(word));
+       	strcpy(p[i], word);
+       	i++;
+       	word = next;
+       }
+
    return p;
 }
 
@@ -226,14 +256,13 @@ int built_in(char** p, int* last){
 #Parameters: Takes user parameters
 #Return: status of child process
 ********************************************************************/
-int staging(char** p){
+int staging(char** p, int* back_check){
    //Create a fork
    pid_t child;
    int status;
    int check;
    int errnum;
    int index = sizeof(p)/sizeof(p[0])-1;
-   int back_check;
 
    int n;
 
@@ -250,31 +279,31 @@ int staging(char** p){
         execvp(p[0], p);
         perror("");
 	fflush(stdout);
-        return EXIT_FAILURE;
+	return 0;
    }
    else{			//Parent proc
-      if(mode == 0 && back_check == 0){	//Run in background
+      
+      
+      if(mode == 0 && *back_check == 1){	//Run in background
+	 *back_check = 0;
+
+	 kids.pids[kids.num_pids] = getpid();	//Track child pid
+	 kids.num_pids++;
+	 printf("background pid is %i\n", kids.pids[kids.num_pids-1]);
+	 fflush(stdout);
 	 return 0;
       }
       else{
-      	n = waitpid(child, &status,0);
+      	n = waitpid(child, &status,0);		//Wait for our buddy to finish
 
 	if (n != child){
 		//error
 		perror("");
 		fflush(stdout);
-	}else if (WIFSIGNALED(status)){		//Catch signal stop
-		//Caught signal
-		printf("Terminated by: %i", WTERMSIG(status));
-		fflush(stdout);
-	}else if (WIFEXITED(status)) {		//Catch termination
-		//Done
-		printf("Terminated by: %i", WTERMSIG(status));
-		fflush(stdout);
 	}
-      }
+      
    }
-   
+   } 
    return 0;
 }
 
@@ -285,9 +314,14 @@ int staging(char** p){
 #Parameters: Parameters from user-input
 #Return: 0 on exit command, 1 otherwise
 ********************************************************************/
-int execute(char **p, int *last){
+int execute(char** p, int* last, int* back_check ){
    const char * easy_string[] = {"cd", "exit", "status", "#"}; 
-   
+  
+
+   //Any input at all?
+   if(p == NULL)
+      return 1;
+
    //Check fo built in commands
    if(p[0]){
       int i = 0;
@@ -303,12 +337,19 @@ int execute(char **p, int *last){
       }
    }
 
-   //Any input at all?
-   if(p[0] == NULL)
+   //Check if <, > was flagged
+   if(read == 1){
+      read_file(p);
+      read = 0;
       return 1;
+   }else if (write == 1){
+      write_file(p);
+      write = 0;
+      return 1;
+   }
 
    //Otherwise prep for forkin
-   *last = staging(p);
+   *last = staging(p, back_check);
    return 1;
 }
 
@@ -334,36 +375,112 @@ void cleanup(char *u, char **p){
 	}
 	free(p);
 }
+/********************************************************************
+#Will handle input when < is passed as a parameter.
+#Read out the file
+********************************************************************/
+int read_file(char** p){
+/*   char content[500];
+   int i;
+   int status;
+  FILE *f = popen(p, "r");
+
+   if(f == NULL){
+      printf("Cannot open %s for input.\n", p[2]);
+      fflush(stdout);
+   }
+
+   while(fgets(content, 500, f) != NULL){
+      printf("%s", content);
+      fflush(stdout);
+   }
+
+   status = pclose(f);
+   if(status == -1){
+   	printf("Error\n");
+	fflush(stdout);
+   }else{
+   	
+   }
+   return 1;
+
+   while(p[i] != NULL){
+      strcat(content, p[i]);
+      i++;
+   }
+   system(content);*/
+   printf("Cannot open %s for input.\n", p[2]);
+   return 1;
+}
+/******************************************************************
+#Will handle > when passed as input.
+#Write input out to a file
+******************************************************************/
+int write_file(char** p){
+
+   char command[500];
+   int i = 0;
+
+
+   while(p[i] != NULL){
+      strcat(command, p[i]);	//Concatanate command for sys call
+      i++;
+   }
+
+   system(command);
+   return 1;
+}
+
+
 
 /********************************************************************
 #Description: Main loop for recieving shell commands.
 ********************************************************************/
 void smallsh(){
 
+   pid_t zombie;
+   int status;
    char *input;
    char **params;
    int check = 1;
    int last = 80;
 
+   int back_check = 0;		//Will track Background flags i.e. '&'
+
    int i = 0;
+   int tmp = 0;
+   int k = 0;
    //Get user input until execute returns a success.
    signal(SIGINT, sig_handle);
    signal(SIGTSTP, sig_handle);
    do{
-      	printf(": ");
-      	fflush(stdout);
-      
-      	//Read the line and decipher arguments
-      	input = read_line();
 
-        params = get_params(input);
-     
+      for(k; k < 10; k++){		//Get any dead procs
+
+	 if(zombie = waitpid(-1, &status, WNOHANG) > 0){
+	    //A Child proc has finished
+	    printf("background pid %d is done: exit value %d\n", kids.pids[k], WEXITSTATUS(status));
+	    fflush(stdout);
+	    kids.pids[k] = 0;
+	    tmp++;
+	 }
+      }
+      kids.num_pids -= tmp;
+
+      printf(": ");
+      fflush(stdout);
+
+      //Read the line and decipher arguments
+      input = read_line();
+
+      params = get_params(input, &back_check);
+
       //Execute the provided arguements.
-      if(execute(params, &last) == 0){	
-	 	check = 0;		//Exit the shell as user-input directed
-      	}
+      if(execute(params, &last, &back_check) == 0){	
+	 check = 0;		//Exit the shell as user-input directed
+      }
    }while(check); 
-   cleanup(input, params);   //Cleanup memory so computers don't hate me
+   //cleanup(input, params);   //Cleanup memory so computers don't hate me
 }
 
 
@@ -371,6 +488,6 @@ int main(){
 
    //Call the shell loop
    smallsh();
-	
+
    return EXIT_SUCCESS;
 }
