@@ -20,7 +20,6 @@ struct child_pids{
 };
 
 
-struct child_pids kids;			//Holds all background pids
 int mode = 0;				//Tracks foreground only mode
 int read = 0;				//Does std need to be read
 int write = 0;				//Write out std to file1
@@ -256,10 +255,11 @@ int built_in(char** p, int* last){
 #Parameters: Takes user parameters
 #Return: status of child process
 ********************************************************************/
-int staging(char** p, int* back_check){
+int staging(char** p, int* back_check, struct child_pids* kids){
    //Create a fork
    pid_t child;
    int status;
+   int child_pid;
    int check;
    int errnum;
    int index = sizeof(p)/sizeof(p[0])-1;
@@ -276,7 +276,10 @@ int staging(char** p, int* back_check){
       return 0;
    }
    else if (child == 0){	//Child proc
-        execvp(p[0], p);
+        child_pid = getpid();
+	if(mode == 0 && *back_check == 1)
+		printf("background pid is %d\n", child_pid);
+	execvp(p[0], p);
         perror("");
 	fflush(stdout);
 	return 0;
@@ -287,9 +290,6 @@ int staging(char** p, int* back_check){
       if(mode == 0 && *back_check == 1){	//Run in background
 	 *back_check = 0;
 
-	 kids.pids[kids.num_pids] = getpid();	//Track child pid
-	 kids.num_pids++;
-	 printf("background pid is %i\n", kids.pids[kids.num_pids-1]);
 	 fflush(stdout);
 	 return 0;
       }
@@ -303,7 +303,7 @@ int staging(char** p, int* back_check){
 	}
       
    }
-   } 
+   }
    return 0;
 }
 
@@ -314,7 +314,7 @@ int staging(char** p, int* back_check){
 #Parameters: Parameters from user-input
 #Return: 0 on exit command, 1 otherwise
 ********************************************************************/
-int execute(char** p, int* last, int* back_check ){
+int execute(char** p, int* last, int* back_check, struct child_pids* kids){
    const char * easy_string[] = {"cd", "exit", "status", "#"}; 
   
 
@@ -349,7 +349,7 @@ int execute(char** p, int* last, int* back_check ){
    }
 
    //Otherwise prep for forkin
-   *last = staging(p, back_check);
+   *last = staging(p, back_check, kids);
    return 1;
 }
 
@@ -445,6 +445,7 @@ void smallsh(){
    int check = 1;
    int last = 80;
 
+   struct child_pids kids;			//Holds all background pids
    int back_check = 0;		//Will track Background flags i.e. '&'
 
    int i = 0;
@@ -455,18 +456,6 @@ void smallsh(){
    signal(SIGTSTP, sig_handle);
    do{
 
-      for(k; k < 10; k++){		//Get any dead procs
-
-	 if(zombie = waitpid(-1, &status, WNOHANG) > 0){
-	    //A Child proc has finished
-	    printf("background pid %d is done: exit value %d\n", kids.pids[k], WEXITSTATUS(status));
-	    fflush(stdout);
-	    kids.pids[k] = 0;
-	    tmp++;
-	 }
-      }
-      kids.num_pids -= tmp;
-
       printf(": ");
       fflush(stdout);
 
@@ -476,9 +465,21 @@ void smallsh(){
       params = get_params(input, &back_check);
 
       //Execute the provided arguements.
-      if(execute(params, &last, &back_check) == 0){	
+      if(execute(params, &last, &back_check, &kids) == 0){	
 	 check = 0;		//Exit the shell as user-input directed
       }
+
+      for(k; k < 10; k++){		//Get any dead procs
+
+	 if( (zombie = waitpid(-1, &status, WNOHANG)) > 0){
+	    //A Child proc has finished
+	    printf("background pid %d is done: exit value %d\n", kids.pids[k], WEXITSTATUS(status));
+	    fflush(stdout);
+	    kids.pids[k] = 0;
+	    tmp++;
+	 }
+      }
+      kids.num_pids -= tmp;		//Update Struct
    }while(check); 
    //cleanup(input, params);   //Cleanup memory so computers don't hate me
 }
